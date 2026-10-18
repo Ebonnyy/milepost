@@ -101,7 +101,12 @@ export function AwardCard({
             {formatAmount(grantedBigInt, { asset: 'USDC' })}
           </span>
         </div>
-        <span className="award-card__mode-badge">{award.mode} mode</span>
+        <div className="award-card__badges">
+          {award.sample && (
+            <span className="award-card__sample">Sample data</span>
+          )}
+          <span className="award-card__mode-badge">{award.mode} mode</span>
+        </div>
       </div>
 
       {/* Tranche Tiles (C03) */}

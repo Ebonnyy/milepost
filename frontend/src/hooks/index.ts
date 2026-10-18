@@ -15,4 +15,6 @@ export {
   type RecipientApplicationsState,
 } from './useRecipientApplications';
 export { useStanding, type StandingState } from './useStanding';
-
+export { useRefundedTo } from './useRefundedTo';
+export { useRecipientAwards, type RecipientAwardsState } from './useRecipientAwards';
+export { useOpenProgrammes, type OpenProgrammesState } from './useOpenProgrammes';
