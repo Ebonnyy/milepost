@@ -201,6 +201,51 @@
   outline-offset: var(--focus-offset);
 }
 
+/* Notes textarea */
+.apply-form__notes {
+  width: 100%;
+  box-sizing: border-box;
+  border: 0;
+  border-radius: var(--radius-input);
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--text-md);
+  line-height: var(--leading-body);
+  padding: var(--space-3) var(--space-4);
+  resize: vertical;
+  min-height: calc(var(--tap-min) * 2);
+}
+
+.apply-form__notes:focus {
+  outline: none;
+}
+
+.apply-form__notes:focus-visible,
+.apply-form__notes:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: var(--focus-offset);
+}
+
+/* Inline tx error underneath the submit button */
+.apply-form__tx-error {
+  margin-top: var(--space-3);
+}
+
+/* Pending state */
+.apply-pending {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-4);
+  padding: var(--space-6) 0;
+}
+
+.apply-pending__label {
+  font-size: var(--text-lg);
+  font-weight: var(--weight-bold);
+}
+
 /* Success / Done view */
 .apply-done {
   display: flex;
@@ -226,6 +271,41 @@
   margin: 0;
   font-size: var(--text-sm);
   line-height: var(--leading-relaxed);
+  color: var(--text-muted);
+}
+
+/* Transaction and hash detail list in the receipt */
+.apply-done__details {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: 0;
+  background: var(--bg);
+  border-radius: var(--radius-row);
+  padding: var(--space-3) var(--space-4);
+}
+
+.apply-done__detail {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.apply-done__detail dt {
+  font-size: var(--text-caption);
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.apply-done__detail dd {
+  margin: 0;
+  font-size: var(--text-caption);
+}
+
+.apply-done__hash {
+  overflow-wrap: anywhere;
   color: var(--text-muted);
 }
 
