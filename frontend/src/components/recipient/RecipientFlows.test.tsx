@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, act, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { Buffer } from 'buffer';
 import { AwardCard } from './AwardCard';
@@ -14,13 +14,6 @@ vi.mock('../../context/useAnnouncer', () => ({
   useAnnouncer: () => mockAnnounce,
 }));
 
-// useOpenProgrammes (used by ApplyForm) fetches the programme index.
-// Return an empty list so only the sample fixtures show up.
-vi.mock('../../lib/indexer', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('../../lib/indexer')>()),
-  fetchProgrammes: vi.fn(async () => []),
-}));
-
 // --- Wallet + Soroban mocks for the Allocated spend flow --------------------
 // AwardCard renders AllocatedSpending for Allocated awards, which reads
 // allocation_of / is_payee / get_phase and sends spend. Only Allocated awards
@@ -33,10 +26,7 @@ const REAL_PROGRAMME = 'CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
 const walletMocks = vi.hoisted(() => ({
   address: RECIPIENT as string | null,
   connect: vi.fn(),
-  signTransaction: vi.fn(async () => ({
-    signedTxXdr: 'SIGNEDXDR==',
-    signerAddress: RECIPIENT,
-  })),
+  signTransaction: vi.fn(),
 }));
 
 vi.mock('../../context/useWallet', () => ({
@@ -57,42 +47,9 @@ function makeProgramme(opts: {
   isPayee?: (addr: string) => boolean;
   finalized?: boolean;
   withdrawn?: boolean;
-  applyResult?: 'ok' | 'alreadyApplied' | 'wrongPhase';
-  releaseResult?: 'ok' | 'alreadyUsed' | 'invalidAttestation' | 'policyNotInstalled';
 } = {}) {
-  const allocation = opts.allocation ?? 10_000_000_000n;
+  const allocation = opts.allocation ?? 10_000_000_000n; // 1,000 USDC
   const application = { finalized: opts.finalized ?? false, withdrawn: opts.withdrawn ?? false };
-
-  const applySignAndSend = vi.fn(async () => {
-    if (opts.applyResult === 'alreadyApplied') throw new Error('Error(Contract, #9)');
-    if (opts.applyResult === 'wrongPhase') throw new Error('Error(Contract, #2)');
-    return {
-      result: { unwrap: () => undefined },
-      sendTransactionResponse: { hash: 'TESTHASH1234567890ABCDEF' },
-    };
-  });
-
-  const releaseSignAndSend = vi.fn(async () => {
-    if (opts.releaseResult === 'alreadyUsed') throw new Error('Error(Contract, #22)');
-    if (opts.releaseResult === 'invalidAttestation') throw new Error('Error(Contract, #21)');
-    if (opts.releaseResult === 'policyNotInstalled') throw new Error('Error(Contract, #34)');
-    return {
-      result: { unwrap: () => 10_000_000_000n },
-      sendTransactionResponse: { hash: 'RELEASEHASH1234567890' },
-    };
-  });
-
-  // Fresh award returned after a successful release.
-  const freshAward = {
-    recipient: RECIPIENT,
-    granted: 30_000_000_000n,
-    released: 20_000_000_000n,
-    tranches: 3,
-    tranches_released: 2,
-    payee: RECIPIENT,
-    mode: { tag: 'Restricted', values: undefined },
-  };
-
   return {
     allocation_of: vi.fn(async () => ({ result: allocation })),
     is_payee: vi.fn(async ({ payee }: { payee: string }) => ({
@@ -106,12 +63,6 @@ function makeProgramme(opts: {
       result: { unwrap: () => application },
     })),
     withdraw: vi.fn(),
-    apply: vi.fn(async () => ({ signAndSend: applySignAndSend })),
-    _applySignAndSend: applySignAndSend,
-    release: vi.fn(async () => ({ signAndSend: releaseSignAndSend })),
-    get_award: vi.fn(async () => ({
-      result: { unwrap: () => freshAward },
-    })),
   };
 }
 
@@ -534,10 +485,10 @@ describe('Recipient Issues Suite (#272, #273, #274, #275)', () => {
 
       // Wait for the programme list to load (async phase reads complete)
       // Only Open programmes should be listed in the radio group
-      expect(await screen.findByText(/Secondary school bursaries 2026/i)).toBeDefined();
+      expect(screen.getByText(/Community resilience grants 2026/i)).toBeDefined();
       expect(screen.getByText(/Smallholder inputs, long rains/i)).toBeDefined();
       // SME supplier microgrants Q2 is in Settled phase, and Vocational bursaries is in Review, so neither should be listed
-      expect(screen.queryByText(/Vocational bursaries, cohort 3/i)).toBeNull();
+      expect(screen.queryByText(/Workforce skills grants, cohort 3/i)).toBeNull();
     });
 
     it('explains the median rule before submitting', () => {

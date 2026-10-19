@@ -34,9 +34,9 @@ vi.mock('../../hooks/useProgrammeBalance', () => ({
   useProgrammeBalance: () => mocks.balance,
 }));
 
-const SCHOOL = 'CBQ4SCHOOLBURSARY2026XK3ZP7M2QWJ5T8VN4RD6HY';
-const SMALLHOLDER = 'CCM2SMALLHOLDERINPUTSLR26A9FK3XU7PZ4E8QT2BN';
-const VOCATIONAL = 'CDV7VOCATIONALCOHORT3PL5QZ2WM8RT4HX6KJ9A3FC';
+const SCHOOL = 'CBJWECZ3EUVNAE73YIMT2KWWNRHRF7NNWVKOLQRVOHSKYRYE32XBRPW7';
+const SMALLHOLDER = 'CB7WB66VLFJUD2WHZYHQF7PHM72THVJYMLZ7YPW2XQKUOUUGKVTWVDXI';
+const VOCATIONAL = 'CCOIACASOVO3ZQLXWWJFGZAU3Y545AGPXLBP4NYHYD77RDCBPXRVZ37C';
 const REAL = 'CREALPROGRAMMEONTESTNET';
 
 const real: DirectoryProgramme = {
@@ -92,7 +92,7 @@ describe('ContributeFlow — amount step', () => {
   it('offers only Open programmes', () => {
     renderFlow();
     const options = screen.getAllByRole('radio').map((radio) => radio.closest('label')?.textContent);
-    expect(options).toEqual(['Secondary school bursaries 2026', 'Smallholder inputs, long rains']);
+    expect(options).toEqual(['Community resilience grants 2026', 'Smallholder inputs, long rains']);
   });
 
   it('refuses an amount above the balance before anything is signed', () => {
@@ -149,7 +149,7 @@ describe('ContributeFlow — confirm, receipt and failure', () => {
 
   it('confirms a contribution and shows the receipt, announced politely', async () => {
     renderFlow();
-    await toConfirm('Secondary school bursaries 2026');
+    await toConfirm('Community resilience grants 2026');
     expect(screen.getByText('Sample chain read: the programme is Open.')).toBeTruthy();
     expect(screen.getByText('100 USDC')).toBeTruthy();
 
@@ -160,7 +160,7 @@ describe('ContributeFlow — confirm, receipt and failure', () => {
     expect(screen.getByText(/Your money stays locked in the programme/)).toBeTruthy();
     await waitFor(() =>
       expect(mocks.announce).toHaveBeenCalledWith(
-        'Contribution of 100 USDC to Secondary school bursaries 2026 confirmed.',
+        'Contribution of 100 USDC to Community resilience grants 2026 confirmed.',
       ),
     );
   });

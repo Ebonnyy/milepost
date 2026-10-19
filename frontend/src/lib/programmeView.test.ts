@@ -143,7 +143,7 @@ describe('sortProgrammes', () => {
   it('sorts open programmes by closing soonest before entries without a close date', () => {
     const sorted = sortProgrammes(mergeProgrammes([]), 'closing-soonest');
     expect(sorted.slice(0, 2).map((p) => p.name)).toEqual([
-      'Secondary school bursaries 2026',
+      'Community resilience grants 2026',
       'Smallholder inputs, long rains',
     ]);
     expect(sorted.at(-1)?.chain.closesInDays).toBeUndefined();
@@ -279,7 +279,7 @@ describe('formatting helpers', () => {
   });
 
   it('shortens long ids', () => {
-    expect(shortId('CBQ4SCHOOLBURSARY2026XK3ZP7M2QWJ5T8VN4RD6HY')).toBe('CBQ4SC…4RD6HY');
+    expect(shortId('CBJWECZ3EUVNAE73YIMT2KWWNRHRF7NNWVKOLQRVOHSKYRYE32XBRPW7')).toBe('CBJWEC…XBRPW7');
     expect(shortId('CSHORT')).toBe('CSHORT');
   });
 });
