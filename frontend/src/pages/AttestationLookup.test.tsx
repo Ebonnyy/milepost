@@ -1,118 +1,85 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { Buffer } from 'buffer';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { fireEvent, render, screen } from '@testing-library/react';
+import { FIXTURE_ATTESTATIONS } from '../fixtures/attestationFixtures';
 import { AttestationLookup } from './AttestationLookup';
-import { SorobanContext, type SorobanState } from '../context/sorobanStore';
 
-const REAL_UID = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
-const UNKNOWN_UID = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
-const VALID_ADDRESS = 'GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5';
+// Issue #408 — the used/unused state comes from `program.is_spent` for the
+// selected programme, never from a fixture flag. Without a programme the page
+// says the check needs one.
 
-describe('Issue #438 - AttestationLookup', () => {
+const PROGRAMME = `C${'A'.repeat(55)}`;
+const sample = FIXTURE_ATTESTATIONS.find((a) => !a.revoked)!;
+
+const state = vi.hoisted(() => {
+  const programme = {
+    is_spent: (...args: unknown[]) => state.isSpent(...args),
+  };
+  // Stable across renders, like the real provider's memoized `programmeAt`.
+  const programmeAt = () => programme;
+  return { isSpent: vi.fn(), programmeAt };
+});
+
+vi.mock('../context/useSoroban', () => ({
+  useSoroban: () => ({ programmeAt: state.programmeAt }),
+}));
+
+function renderPage() {
+  return render(<AttestationLookup />);
+}
+
+function lookUpSample() {
+  fireEvent.click(screen.getByRole('button', { name: sample.uid }));
+}
+
+function selectProgramme() {
+  fireEvent.change(
+    screen.getByLabelText('Programme (to check whether a proof was used)'),
+    { target: { value: PROGRAMME } },
+  );
+  fireEvent.click(screen.getByRole('button', { name: 'Use programme' }));
+}
+
+describe('AttestationLookup spent status', () => {
   beforeEach(() => {
-    vi.restoreAllMocks();
+    state.isSpent = vi.fn(() => Promise.resolve({ result: true }));
   });
 
-  const createSorobanContext = (getAttestFn: unknown): SorobanState =>
-    ({
-      registry: {},
-      attest: {
-        get: getAttestFn,
-      },
-      record: {},
-      policy: {},
-      programmeAt: () => ({}),
-      demoProgramme: {},
-      rpcUrl: 'https://soroban-testnet.stellar.org',
-    } as unknown as SorobanState);
+  it('asks for a programme instead of guessing the used state', () => {
+    renderPage();
+    lookUpSample();
 
-  it('reads a real 64-hex UID on-chain and displays the attestation', async () => {
-    const getMock = vi.fn().mockResolvedValue({
-      result: {
-        unwrap: () => ({
-          uid: Buffer.from(REAL_UID, 'hex'),
-          schema: Buffer.from('11'.repeat(32), 'hex'),
-          attester: 'GATTESTEREXAMPLEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
-          subject: 'GSUBJECTEXAMPLEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
-          data_hash: Buffer.from('22'.repeat(32), 'hex'),
-          created_at: 12345678n,
-          expires_at: null,
-          revoked_at: null,
-        }),
-      },
-    });
-
-    render(
-      <SorobanContext.Provider value={createSorobanContext(getMock)}>
-        <AttestationLookup />
-      </SorobanContext.Provider>,
-    );
-
-    const input = screen.getByLabelText('Attestation id or address');
-    fireEvent.change(input, { target: { value: REAL_UID } });
-    fireEvent.click(screen.getByRole('button', { name: 'Look up' }));
-
-    await waitFor(() => {
-      expect(getMock).toHaveBeenCalledWith({ uid: Buffer.from(REAL_UID, 'hex') });
-    });
-
-    await waitFor(() => {
-      expect(screen.getByText('Valid on-chain')).toBeDefined();
-    });
-
-    expect(screen.getByText('GSUBJECTEXAMPLEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA')).toBeDefined();
-    expect(screen.getByText('GATTESTEREXAMPLEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA')).toBeDefined();
-    // Real on-chain attestation must NOT have "Sample data"
-    expect(screen.queryByText('Sample data')).toBeNull();
+    expect(screen.getByText('Select a programme to check usage')).toBeTruthy();
+    expect(state.isSpent).not.toHaveBeenCalled();
   });
 
-  it('says not found and mentions archival when an unknown UID is searched', async () => {
-    const getMock = vi.fn().mockRejectedValue(new Error('AttestationNotFound: error 3'));
+  it('shows a proof already spent in the selected programme', async () => {
+    state.isSpent = vi.fn(() => Promise.resolve({ result: true }));
+    renderPage();
+    lookUpSample();
+    selectProgramme();
 
-    render(
-      <SorobanContext.Provider value={createSorobanContext(getMock)}>
-        <AttestationLookup />
-      </SorobanContext.Provider>,
-    );
-
-    const input = screen.getByLabelText('Attestation id or address');
-    fireEvent.change(input, { target: { value: UNKNOWN_UID } });
-    fireEvent.click(screen.getByRole('button', { name: 'Look up' }));
-
-    await waitFor(() => {
-      expect(getMock).toHaveBeenCalledWith({ uid: Buffer.from(UNKNOWN_UID, 'hex') });
-    });
-
-    await waitFor(() => {
-      expect(screen.getByText(`Nothing found for “${UNKNOWN_UID}”`)).toBeDefined();
-    });
-
-    expect(
-      screen.getByText(/archived ones need a keepalive before they can be read/),
-    ).toBeDefined();
+    await screen.findByText('Already released a tranche here');
+    // The status names the programme it was checked against.
+    expect(screen.getByText(PROGRAMME)).toBeTruthy();
+    expect(state.isSpent).toHaveBeenCalled();
+    expect(state.isSpent.mock.calls[0][0].attestation.toString('hex')).toBe(sample.uid);
   });
 
-  it('explains the contract search limitation for address searches', async () => {
-    const getMock = vi.fn();
+  it('shows a proof that is still unused in the selected programme', async () => {
+    state.isSpent = vi.fn(() => Promise.resolve({ result: false }));
+    renderPage();
+    lookUpSample();
+    selectProgramme();
 
-    render(
-      <SorobanContext.Provider value={createSorobanContext(getMock)}>
-        <AttestationLookup />
-      </SorobanContext.Provider>,
-    );
+    await screen.findByText('Not used in this programme');
+  });
 
-    const input = screen.getByLabelText('Attestation id or address');
-    fireEvent.change(input, { target: { value: VALID_ADDRESS } });
-    fireEvent.click(screen.getByRole('button', { name: 'Look up' }));
+  it('does not claim the proof is unused when the read fails', async () => {
+    state.isSpent = vi.fn(() => Promise.reject(new Error('rpc down')));
+    renderPage();
+    lookUpSample();
+    selectProgramme();
 
-    // Should NOT call on-chain attest.get with address
-    expect(getMock).not.toHaveBeenCalled();
-
-    // Explains limitation
-    expect(
-      screen.getByText(
-        /The on-chain attestation contract cannot search by subject or attester address; it only supports lookup by 32-byte UID\./,
-      ),
-    ).toBeDefined();
+    await screen.findByText('Could not check this programme');
   });
 });

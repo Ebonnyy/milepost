@@ -6,6 +6,7 @@ import { looksLikeContractId, truncateAddress } from '../../lib/format';
 import { useAnnouncer } from '../../context/useAnnouncer';
 import { PendingPulse } from '../state/AsyncStates';
 import { ModePill } from '../ui';
+import { AllocatedSpending } from './AllocatedSpending';
 import './AwardCard.css';
 
 interface AwardCardProps {

@@ -1,17 +1,20 @@
-import { useCallback, useMemo } from 'react';
+import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { MoneyRow } from '../components/programme/MoneyRow';
+import { ModePill } from '../components/ui';
 import '../components/programme/phasePill.css';
 import { Skeleton, Empty } from '../components/state/AsyncStates';
 import { describeAmount } from '../lib/amount';
 import { useIndexedList, useProgrammeChainReads, useRegistryProgrammes } from '../hooks';
 import { useWallet } from '../context/useWallet';
+import { useAnnouncer } from '../context/useAnnouncer';
 import { fetchMeta, fetchProgrammes, isStale } from '../lib/indexer';
 import { FIXTURE_USER_ROLES, ROLE_LABELS } from '../fixtures/userRoles';
 import {
   DEFAULT_DIRECTORY_SORT,
   DIRECTORY_PHASES,
   DIRECTORY_SORTS,
+  directorySearch,
   filterProgrammes,
   sortProgrammes,
   formatAgo,
@@ -112,6 +115,23 @@ export const ProgrammeDirectory = () => {
     setParams(next, { replace: true });
   }, [params, setParams]);
 
+  const realCount = listRead.data?.filter((p) => Boolean(p?.id)).length ?? 0;
+  const hasReal = realCount > 0;
+  const samplesParam = params.get('samples');
+  const showSamples = hasReal ? samplesParam === '1' : true;
+
+  const toggleSamples = useCallback(() => {
+    const next = new URLSearchParams(params);
+    if (showSamples) next.delete('samples');
+    else next.set('samples', '1');
+    setParams(next, { replace: true });
+  }, [params, setParams, showSamples]);
+
+  const all = useMemo(
+    () => mergeProgrammes(listRead.data, userRoles, { showSamples }),
+    [listRead.data, userRoles, showSamples],
+  );
+  const counts = useMemo(() => phaseCounts(all, query), [all, query]);
   const all = useMemo(
     () => mergeProgrammes(listRead.data, userRoles, registryRead.ids ?? undefined),
     [listRead.data, userRoles, registryRead.ids],
@@ -149,6 +169,26 @@ export const ProgrammeDirectory = () => {
       : '';
 
   const showEmpty = !loading && shown.length === 0;
+  // Carried into every programme link, so "All programmes" can come back to
+  // this filtered view rather than an empty directory.
+  const carriedSearch = directorySearch(params.toString());
+
+  // Issue #485: this list used to be a live region, so every filter change
+  // read every card aloud. Announce just the new count instead — once per
+  // filter, search or sort change. The ref starts at the initial key so the
+  // first load says nothing, and `loading` holds the announcement until the
+  // data lands rather than speaking a count that is about to change.
+  const announce = useAnnouncer();
+  const filterKey = `${query}|${phase}|${sort}|${yoursOnly ? 'yours' : ''}`;
+  const announcedKey = useRef(filterKey);
+
+  useEffect(() => {
+    if (loading || announcedKey.current === filterKey) return;
+    announcedKey.current = filterKey;
+    announce(
+      shown.length === 1 ? '1 programme matches' : `${shown.length} programmes match`,
+    );
+  }, [filterKey, loading, shown.length, announce]);
 
   return (
     <div className="directory-container">
@@ -199,6 +239,16 @@ export const ProgrammeDirectory = () => {
                 Yours
               </button>
             )}
+            {hasReal && (
+              <button
+                type="button"
+                className={`directory-filter${showSamples ? ' directory-filter--on' : ''}`}
+                aria-pressed={showSamples}
+                onClick={toggleSamples}
+              >
+                {showSamples ? 'Hide sample programmes' : 'Show sample programmes'}
+              </button>
+            )}
           </div>
           <label className="directory-sort">
             <span className="directory-sort__label">Sort</span>
@@ -215,6 +265,15 @@ export const ProgrammeDirectory = () => {
           </label>
           <span className="directory-indexline">{indexLine}</span>
         </div>
+
+        {!hasReal && !loading && error == null && (
+          <div role="note" className="directory-banner directory-banner--samples">
+            <span className="directory-banner__title">Showing sample programmes.</span>
+            <span className="directory-banner__body">
+              No real programmes have been published to the index yet. These samples demonstrate layout and milestone workflows.
+            </span>
+          </div>
+        )}
 
         {stale && (
           <div role="status" className="directory-banner directory-banner--stale">
@@ -248,7 +307,9 @@ export const ProgrammeDirectory = () => {
           </div>
         )}
 
-        <div aria-live="polite" aria-busy={loading} className="directory-body">
+        {/* Not a live region: the count is announced through the shared
+            announcer, so replacing these cards reads nothing (#485). */}
+        <div aria-busy={loading} className="directory-body">
           {loading && (
             <div className="directory-grid">
               {[0, 1, 2].map((i) => (
@@ -272,11 +333,7 @@ export const ProgrammeDirectory = () => {
           {!loading && shown.length > 0 && (
             <div className="directory-grid">
               {shown.map((programme) => (
-                <ProgrammeCard
-                  key={programme.id}
-                  programme={programme}
-                  readError={readsByError.get(programme.id)}
-                />
+                <ProgrammeCard key={programme.id} programme={programme} carriedSearch={carriedSearch} />
               ))}
             </div>
           )}
@@ -294,14 +351,15 @@ export const ProgrammeDirectory = () => {
 
 function ProgrammeCard({
   programme,
-  readError,
+  carriedSearch,
 }: {
   programme: DirectoryProgramme;
-  readError?: unknown;
+  /** The directory's filters, carried through so the programme can link back. */
+  carriedSearch: string;
 }) {
   const { chain } = programme;
   const budget = BigInt(chain.contributed) - BigInt(chain.fee);
-  const href = `/programme/${encodeURIComponent(programme.id)}`;
+  const href = `/programme/${encodeURIComponent(programme.id)}${carriedSearch ? `?${carriedSearch}` : ''}`;
 
   const tag = readError !== undefined
     ? 'Chain read failed'
@@ -359,7 +417,13 @@ function ProgrammeCard({
         )}
 
         <div className="directory-card-new__foot">
-          <span className="directory-card-new__sample">{tag}</span>
+          <span className="directory-card-new__sample">
+            {programme.sample ? 'Sample data' : 'Sample chain read'}
+          </span>
+          <span className="directory-card-new__mode">
+            <span className="directory-card-new__mode-label">Planned default</span>
+            <ModePill mode={chain.mode} />
+          </span>
           <span className="directory-card-new__cta">{programmeCta(chain.phase)} →</span>
         </div>
       </article>

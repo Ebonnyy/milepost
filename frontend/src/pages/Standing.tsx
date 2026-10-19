@@ -1,18 +1,172 @@
 import { useState, type FormEvent } from 'react';
 import { Link } from 'react-router-dom';
-import { Search } from 'lucide-react';
-import { useStanding, useTransaction, phaseLabel } from '../hooks';
-import { Empty, ErrorPanel, ErrorState, Loading } from '../components/state/AsyncStates';
-import { AddressChip, Button, Field } from '../components/ui';
+import { Buffer } from 'buffer';
+import type { Standing as OnChainStanding } from '@milepost/record';
+import { useContractResult, useTransaction, phaseLabel } from '../hooks';
+import { AsyncView, ErrorPanel } from '../components/state/AsyncStates';
+import { Badge, Button, Card, TextArea } from '../components/ui';
 import { SignInSheet } from '../components/layout/SignInSheet';
 import { useAnnouncer } from '../context/useAnnouncer';
 import { useSoroban } from '../context/useSoroban';
 import { useWallet } from '../context/useWallet';
-import { KEEPALIVE_DAYS, isTtlLow, standingStats, type StandingView } from '../lib/standing';
+import { FIXTURE_STANDING } from '../fixtures/standing';
+import { KEEPALIVE_DAYS, isTtlLow, standingStats, type StandingAggregate } from '../lib/standing';
 import { describeAmount } from '../lib/amount';
 import { looksLikeAddress } from '../lib/format';
 import { isFailure } from '../lib/errors';
+import {
+  parseStandingHistory,
+  verifyStandingHistory,
+  type HistoryVerdict,
+} from '../lib/standingHistory';
 import './Standing.css';
+
+/**
+ * Shape of the claimant's history. `root` is the history root the `Credited`
+ * event published after that release; it is what makes the first divergent
+ * entry identifiable.
+ */
+const PLACEHOLDER_HISTORY = JSON.stringify(
+  [
+    {
+      programme: 'CD236SGR4CHW3N5WA5REW7CDLCS4ZLDEX6JVEAIHZK7NSN4W7WD7YDAL',
+      amount: '10000000',
+      attestation: '76f8441cc4224ab7f6956fbce0502020c9583bc62611626ba833e37e8d3e18cd',
+      timestamp: '1700000000',
+      root: '5f8d2c5d5f1b68c1a4e1b2e3d4c5f60718293a4b5c6d7e8f9012345678abcdef',
+    },
+  ],
+  null,
+  2,
+);
+
+/**
+ * Fold a pasted history through `record.next_root` and compare it with the
+ * subject's root. Simulation only: nothing is signed and no state changes.
+ */
+function HistoryVerifier({ onChainRoot }: { onChainRoot: Buffer }) {
+  const { record } = useSoroban();
+  const [input, setInput] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [verifying, setVerifying] = useState(false);
+  const [verdict, setVerdict] = useState<HistoryVerdict | null>(null);
+
+  const handleVerify = async () => {
+    setError(null);
+    setVerdict(null);
+
+    const parsed = parseStandingHistory(input);
+    if (!parsed.ok) {
+      setError(parsed.error);
+      return;
+    }
+
+    setVerifying(true);
+    try {
+      const result = await verifyStandingHistory(parsed.entries, onChainRoot, async (step) => {
+        const { result: next } = await record.next_root(step);
+        return next;
+      });
+      setVerdict(result);
+    } catch (caught) {
+      setError(
+        caught instanceof Error
+          ? `Could not complete verification: ${caught.message}`
+          : 'Could not complete verification. Try again.',
+      );
+    } finally {
+      setVerifying(false);
+    }
+  };
+
+  return (
+    <div className="standing-history">
+      <p className="standing-history__intro">
+        Paste the history a recipient shared, as a JSON array. Each entry is one release:
+        programme, amount in stroops, the attestation hash, the unix timestamp, and the
+        history root recorded after it. The chain is folded through the contract&rsquo;s own{' '}
+        <code>next_root</code>, so the hash logic is identical to what was stored.
+      </p>
+
+      <TextArea
+        label="Credit history (JSON array)"
+        hint="Start from the sample shape and replace it with the shared history."
+        placeholder={PLACEHOLDER_HISTORY}
+        rows={8}
+        value={input}
+        error={error}
+        onChange={(event) => {
+          setInput(event.target.value);
+          setError(null);
+          setVerdict(null);
+        }}
+      />
+
+      <div className="standing-history__actions">
+        <Button
+          onClick={() => void handleVerify()}
+          loading={verifying}
+          loadingLabel="Folding chain…"
+          disabled={!input.trim() || verifying}
+        >
+          Verify history chain
+        </Button>
+      </div>
+
+      {verdict && (
+        <div className="standing-history__result" role="status" aria-live="polite">
+          {verdict.kind === 'match' && (
+            <>
+              <Badge tone="success">History verified</Badge>
+              <p>
+                Folding these credits from the zero root reproduces the on-chain root
+                exactly. The claimed history matches what was recorded.
+              </p>
+            </>
+          )}
+
+          {verdict.kind === 'genesis' && (
+            <>
+              <Badge tone="success">Genesis confirmed</Badge>
+              <p>
+                There are no claimed credits and the on-chain root is all zeroes, so this
+                address has not received a tranche yet.
+              </p>
+            </>
+          )}
+
+          {verdict.kind === 'mismatch' && (
+            <>
+              <Badge tone="danger">Mismatch</Badge>
+              <p>
+                <strong>
+                  Entry {verdict.firstBadIndex + 1} is where the history first diverges.
+                </strong>{' '}
+                {verdict.message}
+              </p>
+              <dl className="standing-history__roots">
+                <div>
+                  <dt>Computed from the claimed history</dt>
+                  <dd className="numeric">{verdict.computedRoot}</dd>
+                </div>
+                {verdict.claimedRoot && (
+                  <div>
+                    <dt>Root claimed by this entry</dt>
+                    <dd className="numeric">{verdict.claimedRoot}</dd>
+                  </div>
+                )}
+                <div>
+                  <dt>On-chain root</dt>
+                  <dd className="numeric">{verdict.onChainRoot}</dd>
+                </div>
+              </dl>
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
 
 /** The four recipient routes, in the order the design's section pills use. */
 const RECIPIENT_SECTIONS: { label: string; to: string }[] = [
@@ -85,7 +239,7 @@ export function RecipientSignedOut({ onSignIn }: { onSignIn: () => void }) {
 }
 
 /** The three aggregate figures. Pure, so it renders without a wallet. */
-export function StandingStats({ standing }: { standing: StandingView }) {
+export function StandingStats({ standing }: { standing: StandingAggregate }) {
   return (
     <div className="standing-stats">
       {standingStats(standing).map((stat) => (
@@ -111,7 +265,7 @@ export function StandingStats({ standing }: { standing: StandingView }) {
  * The remaining life is a TTL read the frontend does not surface yet, so when
  * it is unknown the row offers the extension without promising a number.
  */
-function StandingTtlRow({ standing, subject }: { standing: StandingView; subject: string }) {
+function StandingTtlRow({ liveForDays, subject }: { liveForDays: number; subject: string }) {
   const { record } = useSoroban();
   const { address } = useWallet();
   const announce = useAnnouncer();
@@ -125,9 +279,8 @@ function StandingTtlRow({ standing, subject }: { standing: StandingView; subject
     },
   });
 
-  const known = standing.liveForDays !== undefined;
-  const low = known && isTtlLow(standing.liveForDays!, extended);
-  const days = extended ? KEEPALIVE_DAYS : standing.liveForDays;
+  const days = extended ? KEEPALIVE_DAYS : liveForDays;
+  const low = isTtlLow(liveForDays, extended);
 
   const handleExtend = () => {
     void tx.send(async () => {
@@ -175,32 +328,13 @@ function StandingTtlRow({ standing, subject }: { standing: StandingView; subject
   );
 }
 
-/**
- * The standing of one subject, read from the `record` contract.
- *
- * `record.get` returns the aggregates; an address with no history answers
- * `NotFound`, which is a first-time applicant's ordinary state rather than a
- * failure, so it gets the empty state. Any other failure is shown as one.
- */
-export function StandingPanel({ subject }: { subject: string }) {
-  const standing = useStanding(subject);
-
-  if (standing.loading) {
-    return <Loading label="Reading standing" rows={2} />;
-  }
-
-  if (standing.error) {
-    return <ErrorState error={standing.error} contract="record" onRetry={standing.refetch} />;
-  }
-
-  if (!standing.standing) {
-    return (
-      <Empty
-        title="No standing yet."
-        description="Standing is written the first time a programme releases a tranche to this address. It is the record the next funder can rely on, and it appears here as soon as it exists."
-      />
-    );
-  }
+/** The signed-in standing view: the on-chain aggregates, TTL row and verifier. */
+function StandingPanel({ standing, subject }: { standing: OnChainStanding; subject: string }) {
+  const aggregate: StandingAggregate = {
+    programmes: standing.programmes,
+    tranchesReleased: standing.tranches,
+    totalReceived: standing.total_received,
+  };
 
   return (
     <div className="standing-panel">
@@ -211,9 +345,27 @@ export function StandingPanel({ subject }: { subject: string }) {
         against it — even one this protocol has never seen.
       </p>
 
-      <StandingStats standing={standing.standing} />
+      <StandingStats standing={aggregate} />
 
-      <StandingTtlRow standing={standing.standing} subject={subject} />
+      <StandingTtlRow liveForDays={FIXTURE_STANDING.liveForDays} subject={subject} />
+      <span className="standing-sample">
+        Sample lifetime for the design phase. Reading the real TTL is a separate change.
+      </span>
+
+      <Card title="Verify a shared history">
+        <p className="standing-panel__intro">
+          Standing stores a rolling hash root, not the history itself. A next funder can
+          fold the history you share through the contract and check it against the root
+          below — no trust in you or an indexer required.
+        </p>
+        <p className="standing-root">
+          <span className="standing-root__label">On-chain history root</span>
+          <code className="numeric standing-root__value">
+            {standing.history_root.toString('hex')}
+          </code>
+        </p>
+        <HistoryVerifier onChainRoot={standing.history_root} />
+      </Card>
     </div>
   );
 }
@@ -223,11 +375,12 @@ export function StandingPanel({ subject }: { subject: string }) {
  * transaction log.
  *
  * Signed out, the design shows an explainer rather than empty shells. Signed
- * in, it reads the signed-in address's standing from the chain and offers a
- * lookup so any address's record can be read before it is underwritten.
+ * in, it reads the real `record.get` entry and lets anyone verify a claimed
+ * history against the root stored there.
  */
 export const Standing = () => {
   const { address } = useWallet();
+  const { record } = useSoroban();
   const [signInOpen, setSignInOpen] = useState(false);
   const [lookupInput, setLookupInput] = useState('');
   const [lookedUp, setLookedUp] = useState<string | null>(null);
@@ -243,6 +396,12 @@ export const Standing = () => {
     setLookupInput('');
   };
 
+  const standing = useContractResult<OnChainStanding>(
+    () => record.get({ subject: address ?? '' }),
+    [record, address],
+    { contract: 'record', enabled: Boolean(address) },
+  );
+
   return (
     <div className="standing-page">
       <header className="standing-head">
@@ -256,6 +415,18 @@ export const Standing = () => {
       {address ? (
         <div className="standing-section">
           <RecipientSectionNav />
+          <AsyncView
+            {...standing}
+            contract="record"
+            onRetry={standing.refetch}
+            empty={{
+              title: 'No track record yet',
+              description:
+                'Standing appears after a first tranche is released to this address, on any programme.',
+            }}
+          >
+            {(data) => <StandingPanel standing={data} subject={address} />}
+          </AsyncView>
         </div>
       ) : (
         <RecipientSignedOut onSignIn={() => setSignInOpen(true)} />

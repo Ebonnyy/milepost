@@ -1,9 +1,10 @@
-import { useState, type ChangeEvent, type FormEvent } from 'react';
+import { useMemo, useState, type ChangeEvent, type FormEvent } from 'react';
 import { Buffer } from 'buffer';
-import type { Attestation } from '@milepost/attest';
-import { useSoroban } from '../context/useSoroban';
-import { useContractResult } from '../hooks/useContractRead';
+import type { Client as ProgrammeClient } from '@milepost/program';
 import { Badge, Field } from '../components/ui';
+import { useContractRead } from '../hooks';
+import { useSoroban } from '../context/useSoroban';
+import { looksLikeAddress } from '../lib/format';
 import { FIXTURE_ATTESTATIONS, type AttestationFixture } from '../fixtures/attestationFixtures';
 import {
   validateVerifyClaimInput,
@@ -20,10 +21,33 @@ interface ResultRow {
   value: string;
 }
 
-function statusFor(attestation: AttestationFixture): { label: string; tone: 'success' | 'accent' | 'danger' } {
-  if (attestation.revoked) return { label: 'Revoked', tone: 'danger' };
-  if (attestation.used) return { label: 'Used to release a tranche', tone: 'accent' };
-  return { label: 'Valid, not used yet', tone: 'success' };
+/**
+ * Whether a proof has been spent is a per-programme fact, so it is only shown
+ * once a programme is selected. Rendering it as its own component keeps the
+ * read scoped to one attestation and lets each result carry its own status
+ * (issue #408).
+ */
+function SpentStatus({
+  programme,
+  attestation,
+}: {
+  programme: ProgrammeClient | null;
+  attestation: AttestationFixture;
+}) {
+  const read = useContractRead<boolean>(
+    () => programme!.is_spent({ attestation: Buffer.from(attestation.uid, 'hex') }),
+    [programme, attestation.uid],
+    { enabled: programme !== null, contract: 'program' },
+  );
+
+  if (!programme) return <Badge tone="neutral">Select a programme to check usage</Badge>;
+  if (read.loading) return <Badge tone="neutral">Checking this programme…</Badge>;
+  if (read.error) return <Badge tone="warning">Could not check this programme</Badge>;
+  return read.data ? (
+    <Badge tone="accent">Already released a tranche here</Badge>
+  ) : (
+    <Badge tone="success">Not used in this programme</Badge>
+  );
 }
 
 function rowsFor(attestation: AttestationFixture): ResultRow[] {
@@ -50,8 +74,34 @@ const EMPTY_CLAIM_FORM = { uid: '', subject: '', schema: '', attester: '' };
  * claim under this schema from this attester.
  */
 export const AttestationLookup = () => {
-  const { attest } = useSoroban();
+  const { programmeAt } = useSoroban();
   const [mode, setMode] = useState<LookupMode>('id');
+
+  // Whether a proof was used is answered by one programme, not by the
+  // attestation itself. Nothing is guessed until a programme is selected.
+  const [programmeInput, setProgrammeInput] = useState('');
+  const [programmeId, setProgrammeId] = useState<string | null>(null);
+  const [programmeError, setProgrammeError] = useState<string | null>(null);
+  const programme = useMemo(
+    () => (programmeId ? programmeAt(programmeId) : null),
+    [programmeAt, programmeId],
+  );
+
+  const selectProgramme = (event: FormEvent) => {
+    event.preventDefault();
+    const value = programmeInput.trim();
+    if (value === '') {
+      setProgrammeId(null);
+      setProgrammeError(null);
+      return;
+    }
+    if (!looksLikeAddress(value)) {
+      setProgrammeError('Enter a valid programme contract address.');
+      return;
+    }
+    setProgrammeError(null);
+    setProgrammeId(value);
+  };
 
   const [query, setQuery] = useState('');
   const [searched, setSearched] = useState('');
@@ -133,6 +183,36 @@ export const AttestationLookup = () => {
           of an award). No sign-in needed.
         </p>
       </header>
+
+      <form onSubmit={selectProgramme} className="attest-lookup__programme">
+        <Field
+          label="Programme (to check whether a proof was used)"
+          placeholder="C…"
+          value={programmeInput}
+          onChange={(event) => {
+            setProgrammeInput(event.target.value);
+            setProgrammeError(null);
+          }}
+          error={programmeError}
+          hint="Usage is per programme. Without one selected, the used state is not guessed."
+          spellCheck={false}
+        />
+        <button type="submit" className="attest-lookup__submit">
+          Use programme
+        </button>
+        {programmeId && (
+          <button
+            type="button"
+            className="attest-lookup__programme-clear"
+            onClick={() => {
+              setProgrammeId(null);
+              setProgrammeInput('');
+            }}
+          >
+            Clear
+          </button>
+        )}
+      </form>
 
       <div className="attest-lookup__tabs" role="tablist" aria-label="Lookup mode">
         <button
@@ -258,14 +338,21 @@ export const AttestationLookup = () => {
             )}
 
             {hits.map((attestation) => {
-              const status = statusFor(attestation);
               return (
                 <article key={attestation.uid} className="attest-result-card">
                   <div className="attest-result-card__head">
                     <span className="attest-result-card__uid">{attestation.uid}</span>
-                    <Badge tone="warning">Sample data</Badge>
-                    <Badge tone={status.tone}>{status.label}</Badge>
+                    {attestation.revoked ? (
+                      <Badge tone="danger">Revoked</Badge>
+                    ) : (
+                      <SpentStatus programme={programme} attestation={attestation} />
+                    )}
                   </div>
+                  {programmeId && (
+                    <span className="attest-result-card__programme">
+                      Usage checked against <span className="numeric">{programmeId}</span>
+                    </span>
+                  )}
                   {rowsFor(attestation).map((row) => (
                     <div key={row.key} className="attest-result-row">
                       <span className="attest-result-row__key">{row.key}</span>

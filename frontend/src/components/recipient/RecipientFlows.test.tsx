@@ -517,6 +517,8 @@ describe('Recipient Issues Suite (#272, #273, #274, #275)', () => {
       // Wait for programme list to load.
       const amountInput = await screen.findByPlaceholderText('0');
       const notesInput = screen.getByRole('textbox', { name: /application notes/i });
+      // Wait for programme list to load so a selection exists and submit can be enabled.
+      const input = await screen.findByPlaceholderText('0');
       const submitBtn = screen.getByRole('button', { name: /submit application/i }) as HTMLButtonElement;
 
       // Initially disabled (no amount, no notes).
